@@ -47,6 +47,9 @@ class EbuLMStudioLoadModel:
 
     def run_command(self, command):
         try:
+            # Why all this? Some lms commands return some weird characters in the
+            # response that would otherwise cause an error in the Comfy UI log.
+
             # Use utf-8 encoding with errors='replace' to handle problematic characters
             process = subprocess.Popen(
                 command,
@@ -143,11 +146,11 @@ class EbuLMStudioLoadModel:
 
             # Always unload all LLM models first if there are any in memory
             if self.check_models_loaded():
-	            print("Unloading LLMs in memory...")
-	            subprocess.run(['lms', 'unload', '--all'],
-	                           stdout=subprocess.DEVNULL,
-	                           stderr=subprocess.DEVNULL,
-	                           check=True)
+                print("Unloading LLMs in memory...")
+                subprocess.run(['lms', 'unload', '--all'],
+                               stdout=subprocess.DEVNULL,
+                               stderr=subprocess.DEVNULL,
+                               check=True)
 
             print(f"Loading model: {model_search_string}")
             model_path, models_found = self.find_matching_model(model_search_string)
