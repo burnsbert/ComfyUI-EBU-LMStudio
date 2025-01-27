@@ -1,4 +1,4 @@
-# ComfyUI-EBU-LM Studio
+# ComfyUI-EBU-LMStudio
 
 A collection of custom nodes for ComfyUI that provide integration with LM Studio. These nodes allow you to load, unload, and interact with LLMs through the LM Studio command-line interface. This can be used to facilitate the automatic creation of descriptive prompts using a LLM, which is helpful for modern image models like Flux that respond well to detailed prompts in natural language.
 
