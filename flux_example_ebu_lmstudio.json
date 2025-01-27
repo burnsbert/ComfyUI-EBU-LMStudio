@@ -930,7 +930,7 @@
         4096,
         1077434342249168,
         "randomize",
-        false
+        true
       ],
       "color": "#222",
       "bgcolor": "#000"
