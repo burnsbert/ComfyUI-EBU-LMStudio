@@ -1,6 +1,6 @@
 [project]
 name = "comfyui-ebu-lmstudio"
-description = "This ComfyUI extension provides custom nodes for integrating with LMStudio, allowing for loading, managing, and making requests of LLM models through the LMStudio local server and command-line interface."
+description = "This ComfyUI extension provides custom nodes for integrating with LM Studio, allowing for loading, managing, and making requests of LLM models through the LMStudio local server and command-line interface."
 version = "1.0.0"
 authors = [
     {name = "burnsbert"}
