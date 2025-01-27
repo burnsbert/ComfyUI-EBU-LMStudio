@@ -102,8 +102,12 @@ class EbuLMStudioLoadModel:
 
             result = list_process.stdout.replace("\r\n", "\n").replace("\r", "\n")
 
-            # Build a case-insensitive search pattern from the search term
-            search_pattern = re.escape(search_term.lower())
+            # Split search term into parts and escape special regex characters
+            search_parts = [re.escape(part) for part in search_term.lower().split()]
+
+            # Create a pattern that matches all parts in any order
+            # This allows for flexible matching with spaces treated as wildcards
+            search_pattern = '.*'.join(search_parts)
             matched_models = []
 
             # Iterate through the output and find matching models
@@ -116,8 +120,12 @@ class EbuLMStudioLoadModel:
                     if re.search(search_pattern, model_path.lower()):
                         matched_models.append(model_path)
 
+            if not matched_models:
+                print(f"No models found matching '{search_term}'. Available models:\n{result}")
+                return self.ERROR_NO_MODEL_FOUND, result
+
             # Return the first matched model or None if no match
-            return matched_models[0] if matched_models else self.ERROR_NO_MODEL_FOUND, result
+            return matched_models[0], result
 
         except subprocess.CalledProcessError:
             print("Error: Unable to fetch the model list. Is LMStudio running?", file=sys.stderr)

@@ -732,7 +732,7 @@
         "Node name for S&R": "String-🔬"
       },
       "widgets_values": [
-        "STEP ONE\n\nWe pass our prompt through the Loader to trigger the LLM load. It frees up VRAM by unloading both LLMs and image models."
+        "STEP ONE\n\nWe pass our prompt through the Loader to trigger the LLM load. It frees up VRAM by unloading both LLMs and image models. Make sure that your model search string matches an LLM you actually have. The search is case insensitive and spaces are treated as wildcards. When there are multiple matches the first match is loaded."
       ],
       "color": "#322",
       "bgcolor": "#533"
@@ -926,7 +926,7 @@
       },
       "widgets_values": [
         "",
-        "Llama-3.2",
+        "llama 3.2",
         4096,
         1077434342249168,
         "randomize",
