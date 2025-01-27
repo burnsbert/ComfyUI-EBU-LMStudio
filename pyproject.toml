@@ -1,0 +1,16 @@
+[project]
+name = "comfyui-ebu-lmstudio"
+description = "This ComfyUI extension provides custom nodes for integrating with LMStudio, allowing for loading, managing, and making requests of LLM models through the LMStudio local server and command-line interface."
+version = "1.0.0"
+authors = [
+    {name = "burnsbert"}
+]
+keywords = ["comfyui", "lmstudio", "llm", "stable-diffusion", "flux"]
+license = {file = "LICENSE"}
+
+[project.urls]
+Repository = "https://github.com/burnsbert/ComfyUI-EBU-LMStudio"
+
+[tool.comfy]
+PublisherId = "burnsbert"
+DisplayName = "ComfyUI-EBU-LMStudio"
