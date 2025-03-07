@@ -6,6 +6,7 @@ import gc
 import torch
 import requests
 import time
+import random
 
 class EbuLMStudioLoadModel:
     ERROR_NO_MODEL_FOUND = "no model by that name found"
@@ -94,6 +95,13 @@ class EbuLMStudioLoadModel:
 
     def find_matching_model(self, search_term):
         try:
+            # Check if multiple search strings are provided and select one at random
+            if '|' in search_term:
+                search_options = [s.strip() for s in search_term.split('|') if s.strip()]
+                if search_options:
+                    search_term = random.choice(search_options)
+                    print(f"Multiple search strings provided. Randomly selected: '{search_term}'")
+
             print("Fetching model list...")
 
             # Run the 'lms ls --detailed' command to get available models
