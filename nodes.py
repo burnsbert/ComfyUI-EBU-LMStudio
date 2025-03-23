@@ -236,7 +236,7 @@ class EbuLMStudioMakeRequest:
                 "prompt": ("STRING", { "multiline": True, "default": "" }),
                 "system_message": ("STRING", { "multiline": True, "default": "You are an assistant designed to craft AI image prompts for an AI image generator that uses natural language prompts. Follow the instructions you are given, or use the guidelines, to create a detailed prompt that includes creativity and amazing visual details for an unforgetable image. Respond with just your new prompt." }),
                 "url": ("STRING", { "multiline": False, "default": "http://127.0.0.1:1234/v1/chat/completions" }),
-                "context_length": ("INT", { "default": 4096, "min": 512, "max": 8192, "display": "slider" }),
+                "context_length": ("INT", { "default": 4096, "min": 512, "max": 65536, "display": "slider" }),
                 "seed": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff}),
                 "max_tokens": ("INT", {"default": 300, "min": 10, "max": 100000}),
                 "temp": ("FLOAT", {
