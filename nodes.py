@@ -11,6 +11,7 @@ import random
 class EbuLMStudioLoadModel:
     ERROR_NO_MODEL_FOUND = "no model by that name found"
     ERROR_CANT_CONNECT = "can't connect to lmstudio"
+    _currently_loaded_model_path = None  # Store the path of the loaded model
 
     @classmethod
     def INPUT_TYPES(s):
@@ -29,45 +30,38 @@ class EbuLMStudioLoadModel:
     FUNCTION = "load_model"
     CATEGORY = "LMStudio"
 
+    def get_currently_loaded_model_path(self):
+        """Retrieves the path of the currently loaded model from 'lms ps'."""
+        try:
+            command = ['lms', 'ps']
+            process = self.run_command(command)
+            if process and "LOADED MODELS" in process.stdout:
+                for line in process.stdout.splitlines():
+                    if "Path:" in line:
+                        loaded_path = line.split("Path:")[1].strip()
+                        return loaded_path
+            return None
+        except Exception as e:
+            print(f"Error getting loaded model path: {e}", file=sys.stderr)
+            return None
+
     def check_models_loaded(self):
         """Check if any models are currently loaded in LMStudio"""
-        try:
-            # Run the 'lms status' command
-            command = ['lms', 'status']
-            status_process = self.run_command(command)
-
-            if not status_process:
-                return True  # Assume models are loaded if we can't check
-
-            # Look for the "No Models Loaded" indicator in the output
-            return "No Models Loaded" not in status_process.stdout
-
-        except Exception as e:
-            print(f"Error checking model status: {str(e)}", file=sys.stderr)
-            return True  # Assume models are loaded if check fails
+        return self.get_currently_loaded_model_path() is not None
 
     def run_command(self, command):
         try:
-            # Why all this? Some lms commands return some weird characters in the
-            # response that would otherwise cause an error in the Comfy UI log.
-
-            # Use utf-8 encoding with errors='replace' to handle problematic characters
             process = subprocess.Popen(
                 command,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                universal_newlines=False  # Get bytes instead of string
+                universal_newlines=False
             )
-
             stdout_bytes, stderr_bytes = process.communicate()
-
-            # Decode with 'utf-8' and replace invalid characters
             stdout = stdout_bytes.decode('utf-8', errors='replace')
             stderr = stderr_bytes.decode('utf-8', errors='replace')
-
             if process.returncode != 0:
                 raise subprocess.CalledProcessError(process.returncode, command, stdout, stderr)
-
             result = subprocess.CompletedProcess(
                 args=command,
                 returncode=process.returncode,
@@ -75,9 +69,11 @@ class EbuLMStudioLoadModel:
                 stderr=stderr
             )
             return result
-
         except subprocess.CalledProcessError as e:
             print(f"Error executing command {command}: {e}", file=sys.stderr)
+            return None
+        except FileNotFoundError:
+            print("Error: 'lms' command not found. Make sure LM Studio is installed and the 'lms' command is in your system's PATH.", file=sys.stderr)
             return None
 
     def unload_image_models(self):
@@ -91,11 +87,10 @@ class EbuLMStudioLoadModel:
             torch.cuda.empty_cache()
             torch.cuda.ipc_collect()
         except:
-            print("   - Unable to clear cache")
+            print("    - Unable to clear cache")
 
     def find_matching_model(self, search_term):
         try:
-            # Check if multiple search strings are provided and select one at random
             if '|' in search_term:
                 search_options = [s.strip() for s in search_term.split('|') if s.strip()]
                 if search_options:
@@ -103,8 +98,6 @@ class EbuLMStudioLoadModel:
                     print(f"Multiple search strings provided. Randomly selected: '{search_term}'")
 
             print("Fetching model list...")
-
-            # Run the 'lms ls --detailed' command to get available models
             command = ['lms', 'ls', '--detailed']
             list_process = self.run_command(command)
 
@@ -112,20 +105,12 @@ class EbuLMStudioLoadModel:
                 return self.ERROR_CANT_CONNECT, ""
 
             result = list_process.stdout.replace("\r\n", "\n").replace("\r", "\n")
-
-            # Split search term into parts and escape special regex characters
             search_parts = [re.escape(part) for part in search_term.lower().split()]
-
-            # Create a pattern that matches all parts in any order
-            # This allows for flexible matching with spaces treated as wildcards
             search_pattern = '.*'.join(search_parts)
             matched_models = []
 
-            # Iterate through the output and find matching models
             for line in result.split("\n"):
                 line = line.strip()
-
-                # Only match lines that start with '/', these are the llm full names
                 if line.startswith('/'):
                     model_path = line.split()[0].lstrip("/")
                     if re.search(search_pattern, model_path.lower()):
@@ -135,11 +120,13 @@ class EbuLMStudioLoadModel:
                 print(f"No models found matching '{search_term}'. Available models:\n{result}")
                 return self.ERROR_NO_MODEL_FOUND, result
 
-            # Return the first matched model or None if no match
             return matched_models[0], result
 
         except subprocess.CalledProcessError:
             print("Error: Unable to fetch the model list. Is LMStudio running?", file=sys.stderr)
+            return self.ERROR_CANT_CONNECT, ""
+        except FileNotFoundError:
+            print("Error: 'lms' command not found. Make sure LM Studio is installed and the 'lms' command is in your system's PATH.", file=sys.stderr)
             return self.ERROR_CANT_CONNECT, ""
         except Exception as e:
             print(f"Unexpected error: {e}", file=sys.stderr)
@@ -147,33 +134,47 @@ class EbuLMStudioLoadModel:
 
     def load_model(self, input_string, model_search_string, context_length, seed, unload_image_models_first):
         try:
+            # Get the path of the currently loaded model
+            current_loaded_path = self.get_currently_loaded_model_path()
+
+            # Find the model path to be loaded
+            model_path_to_load, models_found = self.find_matching_model(model_search_string)
+            if model_path_to_load in [self.ERROR_NO_MODEL_FOUND, self.ERROR_CANT_CONNECT]:
+                return (input_string, model_path_to_load, models_found)
+
+            # Log the comparison strings
+            print(f"Comparing loaded path: '{current_loaded_path}' with target path: '{model_path_to_load}'")
+
+            # Check if the resolved model path is already loaded
+            if current_loaded_path and model_path_to_load in current_loaded_path:
+                print(f"Model '{model_path_to_load}' (resolved from '{model_search_string}') is already loaded in memory.")
+                return (input_string, model_path_to_load, models_found)
+            else:
+                # Unload LLMs only if a different model needs to be loaded
+                if self.check_models_loaded():
+                    print("Unloading LLMs in memory...")
+                    subprocess.run(['lms', 'unload', '--all'],
+                                        stdout=subprocess.DEVNULL,
+                                        stderr=subprocess.DEVNULL,
+                                        check=True)
+                    self._currently_loaded_model_path = None # Reset loaded model path
+
             # Only unload image models if specified
             if unload_image_models_first:
                 print("Unloading ComfyUI image models to save memory (as requested)")
                 self.unload_image_models()
 
-            # Always unload all LLM models first if there are any in memory
-            if self.check_models_loaded():
-                print("Unloading LLMs in memory...")
-                subprocess.run(['lms', 'unload', '--all'],
-                               stdout=subprocess.DEVNULL,
-                               stderr=subprocess.DEVNULL,
-                               check=True)
-
-            print(f"Loading model: {model_search_string}")
-            model_path, models_found = self.find_matching_model(model_search_string)
-            if model_path in [self.ERROR_NO_MODEL_FOUND, self.ERROR_CANT_CONNECT]:
-                return (input_string, model_path, models_found)
-
+            print(f"Loading model: {model_path_to_load}")
             # Run the 'lms load' command to load the model
-            command = ['lms', 'load', model_path, '-y', f'--context-length={context_length}', f'--gpu=1']
+            command = ['lms', 'load', model_path_to_load, '-y', f'--context-length={context_length}', f'--gpu=1']
             load_process = self.run_command(command)
 
-            if load_process and load_process.returncode == 0:  # Check return code for success
-                print(f"Model loaded: {model_path}")
-                return (input_string, model_path, models_found)
+            if load_process and load_process.returncode == 0:
+                print(f"Model loaded: {model_path_to_load}")
+                self._currently_loaded_model_path = model_path_to_load
+                return (input_string, model_path_to_load, models_found)
             else:
-                print(f"Warning: Issue loading model: {model_path}")
+                print(f"Warning: Issue loading model: {model_path_to_load}")
                 return (input_string, self.ERROR_NO_MODEL_FOUND, models_found)
 
         except Exception as e:
@@ -188,7 +189,7 @@ class EbuLMStudioUnload:
             "required": {
                 "input_string": ("STRING", {"default": ""}),
                 "seed": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff}),
-             },
+            },
         }
 
     RETURN_TYPES = ("STRING",)
@@ -199,25 +200,20 @@ class EbuLMStudioUnload:
     def unload_all(self, input_string, seed):
         try:
             print("Calling lms unload --all")
-
-            # Run the command 'lms unload --all' to unload all llms
             result = subprocess.run(['lms', 'unload', '--all'],
-                                    capture_output=True,
-                                    text=True,
-                                    check=True)
-
-            # Print the output of the command
+                                        capture_output=True,
+                                        text=True,
+                                        check=True)
             print("Command output:", result.stdout)
-
-            # If there's any error output, print it as well
             if result.stderr:
                 print("", result.stderr, file=sys.stderr)
-
-            # Return the input string unchanged
+            EbuLMStudioLoadModel._currently_loaded_model_path = None
             return (input_string,)
-
         except subprocess.CalledProcessError as e:
             print(f"An error occurred while running the command: {e}", file=sys.stderr)
+            return (input_string,)
+        except FileNotFoundError:
+            print("Error: 'lms' command not found. Make sure LM Studio is installed and the 'lms' command is in your system's PATH.", file=sys.stderr)
             return (input_string,)
         except Exception as e:
             print(f"An unexpected error occurred: {e}", file=sys.stderr)
@@ -264,15 +260,12 @@ class EbuLMStudioMakeRequest:
     CATEGORY = "LMStudio"
 
     def sanitize_utf8(self, text):
-        # Sanitize text to ensure it's valid UTF-8 using unicode normalization
         print("Sanitizing the response into UTF-8 safe characters as requested...")
         try:
             from unicodedata import normalize
-            # Normalize to decomposed form and convert to ASCII, dropping diacritics
             return normalize('NFKD', text).encode('ascii', 'ignore').decode('ascii')
         except Exception as e:
             print(f"Warning: UTF-8 sanitization failed: {str(e)}")
-            # Fallback to simple replacement if something goes wrong
             return text.encode('ascii', 'replace').decode('ascii')
 
     def generateText(self, prompt, system_message, url, context_length, seed, max_tokens, temp, top_p, utf8_safe_replace):
@@ -282,8 +275,8 @@ class EbuLMStudioMakeRequest:
     def call_api(self, prompt_text, system_message, url, context_length, seed, max_tokens, temp, top_p, utf8_safe_replace):
         payload = {
             "messages": [
-            { "role": "system", "content": f"{system_message}\n" },
-            { "role": "user", "content": f"{prompt_text}\n" }],
+                { "role": "system", "content": f"{system_message}\n" },
+                { "role": "user", "content": f"{prompt_text}\n" }],
             "max_tokens": max_tokens,
             "temperature": temp,
             "top_p": top_p,
@@ -295,13 +288,11 @@ class EbuLMStudioMakeRequest:
             if response.status_code == 200:
                 result_json = response.json()
                 generatedText = result_json["choices"][0]["message"]["content"]
-
                 if utf8_safe_replace:
                     generatedText = self.sanitize_utf8(generatedText)
                     print("Response (UTF-8 sanitized): " + generatedText)
                 else:
                     print("Response: " + generatedText)
-
                 end_time = time.time()
                 elapsed_time = end_time - start_time
                 print(f"\n[Response generation time: {elapsed_time:.2f} seconds]\n")
