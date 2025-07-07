@@ -52,6 +52,18 @@ Parameters:
 Returns:
 - `export_string`: The input string (unchanged)
 
+### EBU LM Studio Unload Guider Models
+
+Unloads all currently loaded LLM models from LM Studio, on a guider line. Great for Flux.
+
+Parameters:
+- `input_guider`: Input text (passed through unchanged), serves to trigger the action
+- `seed`: Random seed to ensure that this runs on each request
+
+Returns:
+- `export_guider`: The input string (unchanged)
+
+
 ### EBU LM Studio Submit Prompt
 
 Submits a prompt to the currently loaded LLM and returns the response.

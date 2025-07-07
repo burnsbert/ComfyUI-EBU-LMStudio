@@ -306,14 +306,55 @@ class EbuLMStudioMakeRequest:
             print(error_message)
             return error_message
 
+class EbuLMStudioUnloadGuider:
+    ERROR_CANT_CONNECT = "can't connect to lmstudio"
+
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "guider": ("GUIDER",),
+                "seed": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff}),
+            },
+        }
+
+    RETURN_TYPES = ("GUIDER",)
+    RETURN_NAMES = ("guider",)
+    FUNCTION = "unload_all"
+    CATEGORY = "LMStudio"
+
+    def unload_all(self, guider, seed):
+        try:
+            print("Calling lms unload --all")
+            result = subprocess.run(['lms', 'unload', '--all'],
+                                        capture_output=True,
+                                        text=True,
+                                        check=True)
+            print("Command output:", result.stdout)
+            if result.stderr:
+                print("", result.stderr, file=sys.stderr)
+            EbuLMStudioLoadModel._currently_loaded_model_path = None
+            return (guider,)
+        except subprocess.CalledProcessError as e:
+            print(f"An error occurred while running the command: {e}", file=sys.stderr)
+            return (guider,)
+        except FileNotFoundError:
+            print("Error: 'lms' command not found. Make sure LM Studio is installed and the 'lms' command is in your system's PATH.", file=sys.stderr)
+            return (guider,)
+        except Exception as e:
+            print(f"An unexpected error occurred: {e}", file=sys.stderr)
+            return (guider,)
+
 NODE_CLASS_MAPPINGS = {
     "EbuLMStudioLoadModel": EbuLMStudioLoadModel,
     "EbuLMStudioUnload": EbuLMStudioUnload,
     "EbuLMStudioMakeRequest": EbuLMStudioMakeRequest,
+    "EbuLMStudioUnloadGuider": EbuLMStudioUnloadGuider,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "EbuLMStudioLoadModel": "EBU LMStudio Load",
     "EbuLMStudioUnload": "EBU LMStudio Unload All",
     "EbuLMStudioMakeRequest": "EBU LMStudio Make Request",
+    "EbuLMStudioUnloadGuider": "EBU LMStudio Unload (Guider)",
 }
