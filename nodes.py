@@ -7,6 +7,7 @@ import torch
 import requests
 import time
 import random
+import random
 
 class EbuLMStudioLoadModel:
     ERROR_NO_MODEL_FOUND = "no model by that name found"
@@ -345,11 +346,103 @@ class EbuLMStudioUnloadGuider:
             print(f"An unexpected error occurred: {e}", file=sys.stderr)
             return (guider,)
 
+class EbuLMStudioBrainstormer:
+    def __init__(self):
+        pass
+
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "topic": ("STRING", {"default": "Fantasy Setting Magic Spells"}),
+                "for_each_idea": ("STRING", {"default": "A magic spell that a wizard or sorceress might cast in a fantasy novel. I want the name of the spell and a brief description of what it does.", "multiline": True}),
+                "raw_list_size": ("INT", {"default": 20, "min": 1}),
+                "return_list_size": ("INT", {"default": 10, "min": 0}),
+                "ignore_the_first": ("INT", {"default": 0, "min": 0}),
+                "additional_notes_1": ("STRING", {"default": "", "multiline": True}),
+                "additional_notes_2": ("STRING", {"default": "", "multiline": True}),
+                "url": ("STRING", {"multiline": False, "default": "http://127.0.0.1:1234/v1/chat/completions"}),
+                "context_length": ("INT", {"default": 4096, "min": 512, "max": 65536}),
+                "seed": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff}),
+                "max_tokens": ("INT", {"default": 300, "min": 10, "max": 100000}),
+                "temp": ("FLOAT", {"default": 0.70, "min": 0.00, "max": 3.00, "step": 0.01}),
+                "top_p": ("FLOAT", {"default": 0.95, "min": 0.00, "max": 1.00, "step": 0.01}),
+                "utf8_safe_replace": ("BOOLEAN", {"default": False}),
+            },
+        }
+
+    RETURN_TYPES = ("STRING", "STRING")
+    RETURN_NAMES = ("result", "full_list")
+    FUNCTION = "brainstorm"
+    CATEGORY = "LMStudio"
+
+    def brainstorm(self, topic, for_each_idea, raw_list_size, return_list_size, ignore_the_first,
+                  additional_notes_1, additional_notes_2,
+                  url, context_length, seed, max_tokens, temp, top_p, utf8_safe_replace):
+        # Hard-coded system message
+        system_message = (
+            "You are an expert brainstorming assistant whose sole job is to produce numbered lists of suggestions. "
+            "Respond with the list only—no titles, no commentary, no extra text. Each suggestion must be on one line."
+        )
+        # Base prompt with strict list instruction and positive/negative framing
+        prompt = (
+            f"Generate exactly {raw_list_size} ideas on the topic '{topic}'.\n\n"
+            f"For each idea, provide exactly this information and no more: {for_each_idea}.\n"
+            f"Each list item must consist of exactly the information specified above. "
+            "Do not include any additional context, background, or commentary beyond that.\n"
+            f"Return exactly {raw_list_size} lines. Each line must begin with '1. ', '2. ', etc., followed by the suggestion. "
+            "There must be a real line break after each item, and no literal '\\n' sequences."
+        )
+        # Append additional notes if provided
+        notes = []
+        if additional_notes_1.strip() or additional_notes_2.strip():
+            notes.append("=== ADDITIONAL NOTES ===")
+            if additional_notes_1.strip():
+                notes.append(additional_notes_1.strip())
+            if additional_notes_2.strip():
+                notes.append(additional_notes_2.strip())
+            prompt += "\n\n" + "\n".join(notes)
+
+        # Call LMStudio via existing node logic
+        make_request = EbuLMStudioMakeRequest()
+        full_response = make_request.generateText(
+            prompt, system_message,
+            url, context_length, seed,
+            max_tokens, temp, top_p,
+            utf8_safe_replace
+        )[0]
+        full_list = full_response.strip()
+
+        # Process full_list into result
+        lines = [line for line in full_list.splitlines() if line.strip()]
+        # Skip the first N lines if requested
+        if ignore_the_first > 0:
+            if ignore_the_first >= len(lines):
+                raise ValueError(f"ignore_the_first ({ignore_the_first}) must be less than the total number of ideas ({len(lines)})")
+            lines = lines[ignore_the_first:]
+        # Validate return_list_size against available lines
+        if return_list_size > len(lines):
+            raise ValueError(f"return_list_size ({return_list_size}) cannot be greater than available ideas ({len(lines)}) after ignoring the first {ignore_the_first}")
+        # Generate result
+        if return_list_size == 0:
+            result = ""
+        elif return_list_size == 1:
+            choice = random.choice(lines)
+            result = re.sub(r'^\s*\d+[\.|\)]\s*', '', choice).strip()
+        else:
+            sampled = random.sample(lines, return_list_size)
+            stripped = [re.sub(r'^\s*\d+[\.|\)]\s*', '', l).strip() for l in sampled]
+            result_lines = [f"{i+1}. {stripped[i]}" for i in range(len(stripped))]
+            result = "\n".join(result_lines)
+
+        return (result, full_list)
+
 NODE_CLASS_MAPPINGS = {
     "EbuLMStudioLoadModel": EbuLMStudioLoadModel,
     "EbuLMStudioUnload": EbuLMStudioUnload,
     "EbuLMStudioMakeRequest": EbuLMStudioMakeRequest,
     "EbuLMStudioUnloadGuider": EbuLMStudioUnloadGuider,
+    "EbuLMStudioBrainstormer": EbuLMStudioBrainstormer,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
@@ -357,4 +450,5 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "EbuLMStudioUnload": "EBU LMStudio Unload All",
     "EbuLMStudioMakeRequest": "EBU LMStudio Make Request",
     "EbuLMStudioUnloadGuider": "EBU LMStudio Unload (Guider)",
+    "EbuLMStudioBrainstormer": "EBU LMStudio Brainstormer",
 }

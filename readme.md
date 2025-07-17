@@ -82,6 +82,30 @@ Parameters:
 Returns:
 - `generated_text`: The LLM's response
 
+### EBU LM Studio Brainstormer
+
+Generates a numbered list of ideas based on a topic, or can return a single idea chosen from a randomly generated list. Great for using an LLM to come up with names and other details for a prompt on the fly. Since LLMs tend to repeat themselves in the early part of the list from other generations I've given this the option to skip the first N results.
+
+**Parameters:**  
+- `topic`: The subject for brainstorming (default: `"Fantasy Setting Magic Spells"`)  
+- `for_each_idea`: Description template for each idea, without numbering (multiline)  
+- `raw_list_size`: Number of ideas to generate in the full list (default: 20)  
+- `return_list_size`: Number of ideas to return in the final sampled list (default: 10)  
+- `ignore_the_first`: Number of initial ideas to skip when sampling (default: 0)  
+- `additional_notes_1`: Optional additional note to append to the prompt (multiline)  
+- `additional_notes_2`: Optional second additional note to append to the prompt (multiline)  
+- `url`: LM Studio API endpoint (default: `http://127.0.0.1:1234/v1/chat/completions`)  
+- `context_length`: Context window size (default: 4096)  
+- `seed`: Random seed for reproducibility  
+- `max_tokens`: Maximum response length (default: 300)  
+- `temp`: Temperature parameter (default: 0.70)  
+- `top_p`: Top-p sampling parameter (default: 0.95)  
+- `utf8_safe_replace`: Convert response to safe ASCII characters (default: false)  
+
+**Returns:**  
+- `result`: A formatted, numbered list of sampled ideas  
+- `full_list`: The complete list of generated ideas with original numbering  
+
 ## Requirements
 
 - Python 3.x
