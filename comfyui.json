@@ -1,6 +1,6 @@
 {
   "name": "ComfyUI-EBU-LMStudio",
-  "author": "Eric Burns",
+  "author": "burnsbert",
   "description": "Custom nodes for ComfyUI that integrate with LM Studio, enabling model management, prompt submission, and brainstorming using LLMs.",
   "version": "1.0.8",
   "repository": "https://github.com/burnsbert/ComfyUI-EBU-LMStudio",
