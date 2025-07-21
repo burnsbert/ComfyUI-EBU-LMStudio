@@ -20,6 +20,13 @@ class EbuLMStudioLoadModel:
             "required": {
                 "input_string": ("STRING",),
                 "model_search_string": ("STRING", {"default": "llama"}),
+                "offload": ("FLOAT", {
+                    "default": 1.0,
+                    "min": 0.0,
+                    "max": 1.0,
+                    "step": 0.05,
+                    "display": "number"
+                }),
                 "context_length": ("INT", {"default": 4096, "min": 1000, "max": 200000}),
                 "seed": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff}),
                 "unload_image_models_first": ("BOOLEAN", {"default": False}),
@@ -167,7 +174,7 @@ class EbuLMStudioLoadModel:
 
             print(f"Loading model: {model_path_to_load}")
             # Run the 'lms load' command to load the model
-            command = ['lms', 'load', model_path_to_load, '-y', f'--context-length={context_length}', f'--gpu=1']
+            command = ['lms', 'load', model_path_to_load, '-y', f'--context-length={context_length}', f'--gpu={offload}']
             load_process = self.run_command(command)
 
             if load_process and load_process.returncode == 0:
@@ -175,7 +182,7 @@ class EbuLMStudioLoadModel:
                 self._currently_loaded_model_path = model_path_to_load
                 return (input_string, model_path_to_load, models_found)
             else:
-                print(f"Warning: Issue loading model: {model_path_to_load}")
+                print(f"Warning: Issue loading model: {model_path_to_load}. Try to reduce offload")
                 return (input_string, self.ERROR_NO_MODEL_FOUND, models_found)
 
         except Exception as e:

@@ -32,6 +32,7 @@ Unloads any loaded LLMs and then loads an LLM model into LM Studio with the foll
 
 - `input_string`: Input text (passed through unchanged), serves to trigger the action
 - `model_search_string`: Part of the model name to search for (default: "llama"). Spaces are treated as wild cards. First matching LLM is loaded. So "nemo q5" will match "Mistral-Nemo-Instruct-2407-abliterated.Q5_K_M.gguf" for example. You can have multiple searches separated by "|" and one will be chosen at random.
+- `offload`: Part of the model offloaded to GPU (from 0.0 to 1.0)
 - `context_length`: Model context length (default: 4096)
 - `seed`: Random seed to ensure that this runs on each request
 - `unload_image_models_first`: Whether to unload ComfyUI image models before loading LLM
