@@ -7,12 +7,12 @@ import torch
 import requests
 import time
 import random
-import random
+import json
 
 class EbuLMStudioLoadModel:
     ERROR_NO_MODEL_FOUND = "no model by that name found"
     ERROR_CANT_CONNECT = "can't connect to lmstudio"
-    _currently_loaded_model_path = None  # Store the path of the loaded model
+    _currently_loaded_model_path = None  # Best-effort; may be a key if no path is available
 
     @classmethod
     def INPUT_TYPES(s):
@@ -31,53 +31,149 @@ class EbuLMStudioLoadModel:
     FUNCTION = "load_model"
     CATEGORY = "LMStudio"
 
-    def get_currently_loaded_model_path(self):
-        """Retrieves the path of the currently loaded model from 'lms ps'."""
+    # ---------- low-level helpers ----------
+
+    def run_command(self, command, timeout=180):
+        import subprocess, sys
         try:
-            command = ['lms', 'ps']
-            process = self.run_command(command)
-            if process and "LOADED MODELS" in process.stdout:
-                for line in process.stdout.splitlines():
-                    if "Path:" in line:
-                        loaded_path = line.split("Path:")[1].strip()
-                        return loaded_path
+            process = subprocess.run(
+                [str(c) for c in command],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",   # <- force UTF-8
+                errors="replace",   # <- avoid decode crashes
+                timeout=timeout,
+                shell=False
+            )
+            if process.returncode != 0:
+                print(f"[lms-node] Command failed: {command}", file=sys.stderr)
+                if process.stdout:
+                    print(f"[lms-node] STDOUT:\n{process.stdout}", file=sys.stderr)
+                if process.stderr:
+                    print(f"[lms-node] STDERR:\n{process.stderr}", file=sys.stderr)
+                return None
+            return process
+        except FileNotFoundError:
+            print("Error: 'lms' command not found. Make sure LM Studio is installed and in PATH.", file=sys.stderr)
             return None
         except Exception as e:
-            print(f"Error getting loaded model path: {e}", file=sys.stderr)
+            print(f"[lms-node] Unexpected error running {command}: {e}", file=sys.stderr)
             return None
+
+    def _list_models(self):
+        """
+        Return ('json'|'text', stdout) from an `lms ls` variant, or (None,"") on failure.
+        """
+        p = self.run_command(['lms', 'ls', '--json'])
+        if p and p.stdout and p.stdout.strip().startswith(('[', '{')):
+            return 'json', p.stdout
+
+        p = self.run_command(['lms', 'ls'])
+        if p and p.stdout:
+            return 'text', p.stdout
+
+        # Legacy/alt
+        p = self.run_command(['lms', 'models', 'ls'])
+        if p and p.stdout:
+            return 'text', p.stdout
+
+        return None, ""
+
+    def _models_index(self):
+        """Return list of JSON model dicts (or empty list)."""
+        import json
+        p = self.run_command(['lms', 'ls', '--json'])
+        if not (p and p.stdout and p.stdout.strip().startswith(('[', '{'))):
+            return []
+        try:
+            data = json.loads(p.stdout)
+            items = data if isinstance(data, list) else data.get('models', [])
+            if isinstance(items, dict):
+                items = items.get('models', [])
+            return items if isinstance(items, list) else []
+        except Exception:
+            return []
+
+    def _model_info_for_key(self, key):
+        """Return the model JSON dict for modelKey (or None)."""
+        for m in self._models_index():
+            if isinstance(m, dict) and m.get('modelKey') == key:
+                return m
+        return None
+
+    def _path_for_model_key(self, key):
+        """Return GGUF path for a modelKey using JSON (or None)."""
+        m = self._model_info_for_key(key)
+        return (m or {}).get('path')
+
+    def _parse_keys_from_text(self, s):
+        """
+        Parse first column under the 'LLM' header in `lms ls` table output.
+        """
+        import re
+        keys = []
+        header_seen = False
+        for raw in (s or "").splitlines():
+            line = raw.rstrip()
+            if not line.strip():
+                continue
+            if not header_seen:
+                if re.match(r'^\s*LLM\s+', line):
+                    header_seen = True
+                continue
+            if re.match(r'^\s*EMBEDDING\s+', line):
+                break
+            m = re.match(r'^(\S[^\s].*?)\s{2,}', line)
+            if m:
+                keys.append(m.group(1).strip())
+        return keys
+
+    def _get_loaded_ps_stdout(self):
+        p = self.run_command(['lms', 'ps'])
+        return p.stdout if p else ""
+
+    def _ps_rows(self):
+        """
+        Parse `lms ps` into rows of {identifier, model, status, size, context, ttl}.
+        Very simple column-split on 2+ spaces.
+        """
+        import re
+        out = []
+        ps = self._get_loaded_ps_stdout()
+        lines = [ln for ln in (ps or "").splitlines() if ln.strip()]
+        if len(lines) < 2:
+            return out
+        # skip header line
+        for ln in lines[1:]:
+            cols = re.split(r'\s{2,}', ln.strip())
+            if len(cols) >= 2:
+                row = {
+                    "identifier": cols[0],
+                    "model": cols[1],
+                    "status": cols[2] if len(cols) > 2 else "",
+                    "size": cols[3] if len(cols) > 3 else "",
+                    "context": cols[4] if len(cols) > 4 else "",
+                    "ttl": cols[5] if len(cols) > 5 else "",
+                }
+                out.append(row)
+        return out
+
+    # ---------- compatibility shim ----------
+
+    def get_currently_loaded_model_path(self):
+        """
+        Best-effort: returns the MODEL key from `lms ps`.
+        """
+        rows = self._ps_rows()
+        return rows[0]["model"] if rows else None
 
     def check_models_loaded(self):
-        """Check if any models are currently loaded in LMStudio"""
-        return self.get_currently_loaded_model_path() is not None
-
-    def run_command(self, command):
-        try:
-            process = subprocess.Popen(
-                command,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                universal_newlines=False
-            )
-            stdout_bytes, stderr_bytes = process.communicate()
-            stdout = stdout_bytes.decode('utf-8', errors='replace')
-            stderr = stderr_bytes.decode('utf-8', errors='replace')
-            if process.returncode != 0:
-                raise subprocess.CalledProcessError(process.returncode, command, stdout, stderr)
-            result = subprocess.CompletedProcess(
-                args=command,
-                returncode=process.returncode,
-                stdout=stdout,
-                stderr=stderr
-            )
-            return result
-        except subprocess.CalledProcessError as e:
-            print(f"Error executing command {command}: {e}", file=sys.stderr)
-            return None
-        except FileNotFoundError:
-            print("Error: 'lms' command not found. Make sure LM Studio is installed and the 'lms' command is in your system's PATH.", file=sys.stderr)
-            return None
+        """Check if any models are currently loaded in LM Studio (via `lms ps`)."""
+        return bool(self._ps_rows())
 
     def unload_image_models(self):
+        import gc, torch
+        from comfy import model_management  # assumes ComfyUI env
         print("Unload Image Models:")
         print(" - Unloading all image models...")
         model_management.unload_all_models()
@@ -87,99 +183,258 @@ class EbuLMStudioLoadModel:
             gc.collect()
             torch.cuda.empty_cache()
             torch.cuda.ipc_collect()
-        except:
+        except Exception:
             print("    - Unable to clear cache")
 
+    # ---------- search (spaces = wildcards) ----------
+
     def find_matching_model(self, search_term):
+        """
+        Returns (chosen_model_key, raw_listing).
+        - Case-insensitive
+        - Spaces act like wildcards (tokens may appear anywhere, in any order)
+        - Searches across key, displayName, path, architecture, paramsString, quantization.name/bits
+        On failure: (ERROR_*, raw_listing_or_reason)
+        """
+        import re, random, json, sys
+
         try:
+            # allow "a|b|c" forms
             if '|' in search_term:
-                search_options = [s.strip() for s in search_term.split('|') if s.strip()]
-                if search_options:
-                    search_term = random.choice(search_options)
+                options = [s.strip() for s in search_term.split('|') if s.strip()]
+                if options:
+                    search_term = random.choice(options)
                     print(f"Multiple search strings provided. Randomly selected: '{search_term}'")
 
             print("Fetching model list...")
-            command = ['lms', 'ls', '--detailed']
-            list_process = self.run_command(command)
+            mode, listing = self._list_models()
+            if not listing:
+                return self.ERROR_CANT_CONNECT, "No output from `lms ls` variants."
 
-            if not list_process:
-                return self.ERROR_CANT_CONNECT, ""
+            # Prefer JSON (richer matching)
+            if mode != 'json':
+                pjson = self.run_command(['lms', 'ls', '--json'])
+                if pjson and pjson.stdout and pjson.stdout.strip().startswith(('[', '{')):
+                    mode, listing = 'json', pjson.stdout
 
-            result = list_process.stdout.replace("\r\n", "\n").replace("\r", "\n")
-            search_parts = [re.escape(part) for part in search_term.lower().split()]
-            search_pattern = '.*'.join(search_parts)
-            matched_models = []
+            tokens = [t for t in re.split(r'\s+', (search_term or '').strip().lower()) if t]
+            if not tokens:
+                return self.ERROR_NO_MODEL_FOUND, listing
 
-            for line in result.split("\n"):
-                line = line.strip()
-                if line.startswith('/'):
-                    model_path = line.split()[0].lstrip("/")
-                    if re.search(search_pattern, model_path.lower()):
-                        matched_models.append(model_path)
+            if mode == 'json':
+                try:
+                    data = json.loads(listing)
+                    items = data if isinstance(data, list) else data.get('models', [])
+                    if isinstance(items, dict):
+                        items = items.get('models', [])
+                except Exception as e:
+                    print(f"[lms-node] JSON parse error (matching): {e}", file=sys.stderr)
+                    items = []
 
-            if not matched_models:
-                print(f"No models found matching '{search_term}'. Available models:\n{result}")
-                return self.ERROR_NO_MODEL_FOUND, result
+                candidates = []
+                for m in items or []:
+                    if not isinstance(m, dict):
+                        continue
+                    key  = (m.get('modelKey') or m.get('key') or m.get('name') or
+                            m.get('identifier') or m.get('displayName') or "")
+                    disp = m.get('displayName', "") or ""
+                    path = m.get('path', "") or ""
+                    arch = m.get('architecture', "") or ""
+                    params = m.get('paramsString', "") or ""
+                    q = m.get('quantization') or {}
+                    qname = (q.get('name') if isinstance(q, dict) else "") or ""
+                    qbits = (str(q.get('bits')) if isinstance(q, dict) and q.get('bits') is not None else "")
 
-            return matched_models[0], result
+                    hay = " ".join([str(key), disp, path, arch, params, qname, qbits]).lower()
 
-        except subprocess.CalledProcessError:
-            print("Error: Unable to fetch the model list. Is LMStudio running?", file=sys.stderr)
-            return self.ERROR_CANT_CONNECT, ""
-        except FileNotFoundError:
-            print("Error: 'lms' command not found. Make sure LM Studio is installed and the 'lms' command is in your system's PATH.", file=sys.stderr)
-            return self.ERROR_CANT_CONNECT, ""
+                    # all tokens must appear
+                    tok_hits = [t in hay for t in tokens]
+                    score = sum(tok_hits)
+                    if score == len(tokens):
+                        in_order = bool(re.search(".*".join(map(re.escape, tokens)), hay))
+                        candidates.append({
+                            "key": str(m.get('modelKey', key)),
+                            "hay": hay,
+                            "in_order": in_order,
+                            "key_len": len(str(m.get('modelKey', key)) or ""),
+                            "hay_len": len(hay),
+                        })
+
+                if not candidates:
+                    print(f"No models found matching '{search_term}'.")
+                    return self.ERROR_NO_MODEL_FOUND, listing
+
+                candidates.sort(key=lambda c: (c["in_order"], c["key_len"], c["hay_len"]), reverse=True)
+                return candidates[0]["key"], listing
+
+            else:
+                # Text fallback over parsed keys only
+                keys = self._parse_keys_from_text(listing)
+                if not keys:
+                    print("[lms-node] Parser could not extract any model keys from text listing.", file=sys.stderr)
+                    return self.ERROR_NO_MODEL_FOUND, listing
+
+                def all_tokens_in(s: str) -> bool:
+                    s = s.lower()
+                    return all(t in s for t in tokens)
+
+                hits = [k for k in keys if all_tokens_in(k)]
+                if not hits:
+                    print(f"No models found matching '{search_term}'.")
+                    return self.ERROR_NO_MODEL_FOUND, listing
+
+                return max(hits, key=len), listing
+
         except Exception as e:
             print(f"Unexpected error: {e}", file=sys.stderr)
             return self.ERROR_CANT_CONNECT, ""
 
+    # ---------- load + rich metadata ----------
+
+    def _build_loaded_metadata(self, model_key, chosen_path, context_length):
+        """
+        Build a rich metadata dict for the loaded model, including identifier & load method.
+        """
+        import os, re, copy
+
+        info = self._model_info_for_key(model_key) or {}
+        meta = {
+            "modelKey": model_key,
+            "displayName": info.get("displayName"),
+            "path": info.get("path") or chosen_path,
+            "architecture": info.get("architecture"),
+            "paramsString": info.get("paramsString"),
+            "quantization": info.get("quantization"),
+            "maxContextLength": info.get("maxContextLength"),
+            "loadedContextLength": int(context_length),
+            "loadedVia": "path" if chosen_path else "key",
+            "identifier": None,   # filled from `lms ps`
+            "status": None,
+            "size": None,
+        }
+
+        # Try to extract current identifier/status/size/context from ps
+        rows = self._ps_rows()
+        # Heuristics to find the matching row
+        match = None
+        if rows:
+            # prefer model key match
+            for r in rows:
+                if r.get("model") and model_key in r["model"]:
+                    match = r
+                    break
+            # else, fallback: match by chosen_path filename stem
+            if not match and chosen_path:
+                stem = os.path.basename(chosen_path)
+                stem = re.sub(r'\.gguf$', '', stem, flags=re.IGNORECASE)
+                for r in rows:
+                    if r.get("model") and (stem in r["model"]):
+                        match = r
+                        break
+        if match:
+            meta["identifier"] = match.get("identifier")
+            meta["status"] = match.get("status")
+            meta["size"] = match.get("size")
+            # keep ps's reported context if present
+            try:
+                meta["reportedContext"] = int(match.get("context")) if match.get("context") else None
+            except Exception:
+                meta["reportedContext"] = match.get("context")
+
+        return meta
+
     def load_model(self, input_string, model_search_string, context_length, seed, unload_image_models_first):
+        import sys, re, json, os
         try:
-            # Get the path of the currently loaded model
-            current_loaded_path = self.get_currently_loaded_model_path()
+            # 1) Resolve candidate key using your wildcard search
+            model_key_to_load, models_found = self.find_matching_model(model_search_string)
+            if model_key_to_load in [self.ERROR_NO_MODEL_FOUND, self.ERROR_CANT_CONNECT]:
+                return (input_string, model_key_to_load, models_found)
 
-            # Find the model path to be loaded
-            model_path_to_load, models_found = self.find_matching_model(model_search_string)
-            if model_path_to_load in [self.ERROR_NO_MODEL_FOUND, self.ERROR_CANT_CONNECT]:
-                return (input_string, model_path_to_load, models_found)
+            # 2) If already loaded, short-circuit (but still emit rich logs)
+            if any(model_key_to_load in r.get("model", "") for r in self._ps_rows()):
+                print(f"Model '{model_key_to_load}' already loaded.")
+                self._currently_loaded_model_path = model_key_to_load
+                meta = self._build_loaded_metadata(model_key_to_load, None, context_length)
+                print("[lms-node] Loaded Model Info:\n" + json.dumps(meta, indent=2))
+                short_name = None
+                if meta.get("path"):
+                    short_name = meta["path"].replace("\\", "/").split("/")[-1]
+                if not short_name:
+                    short_name = model_key_to_load
+                return (input_string, short_name, models_found)
 
-            # Log the comparison strings
-            print(f"Comparing loaded path: '{current_loaded_path}' with target path: '{model_path_to_load}'")
+            # 3) Prep memory
+            if self.check_models_loaded():
+                print("Unloading LLMs in memory...")
+                self.run_command(['lms', 'unload', '--all'])
 
-            # Check if the resolved model path is already loaded
-            if current_loaded_path and model_path_to_load in current_loaded_path:
-                print(f"Model '{model_path_to_load}' (resolved from '{model_search_string}') is already loaded in memory.")
-                return (input_string, model_path_to_load, models_found)
-            else:
-                # Unload LLMs only if a different model needs to be loaded
-                if self.check_models_loaded():
-                    print("Unloading LLMs in memory...")
-                    subprocess.run(['lms', 'unload', '--all'],
-                                        stdout=subprocess.DEVNULL,
-                                        stderr=subprocess.DEVNULL,
-                                        check=True)
-                    self._currently_loaded_model_path = None # Reset loaded model path
-
-            # Only unload image models if specified
             if unload_image_models_first:
                 print("Unloading ComfyUI image models to save memory (as requested)")
                 self.unload_image_models()
 
-            print(f"Loading model: {model_path_to_load}")
-            # Run the 'lms load' command to load the model
-            command = ['lms', 'load', model_path_to_load, '-y', f'--context-length={context_length}', f'--gpu=1']
-            load_process = self.run_command(command)
+            # 4) Load by KEY (normal case). If it fails or key contains '@', attempt PATH fallback explicitly.
+            print(f"Loading model by key: {model_key_to_load}")
+            key_proc = None
+            path_proc = None
+            chosen_path = None
 
-            if load_process and load_process.returncode == 0:
-                print(f"Model loaded: {model_path_to_load}")
-                self._currently_loaded_model_path = model_path_to_load
-                return (input_string, model_path_to_load, models_found)
-            else:
-                print(f"Warning: Issue loading model: {model_path_to_load}")
+            # Attempt by key unless we *know* '@' keys won't work and you prefer to try anyway for visibility.
+            key_cmd = ['lms', 'load', model_key_to_load, '-y',
+                       '--context-length', str(int(context_length)), '--gpu', 'max']
+            key_proc = self.run_command(key_cmd, timeout=600)
+
+            # Clear, explicit fallback logging
+            if key_proc is None or ('@' in model_key_to_load):
+                print(f"[lms-node] Key load failed or contained '@'. Attempting PATH fallback...")
+                chosen_path = self._path_for_model_key(model_key_to_load)
+                if chosen_path:
+                    print(f"[lms-node] Fallback path resolved: {chosen_path}")
+                    path_cmd = ['lms', 'load', '--exact', '-y',
+                                '--context-length', str(int(context_length)), '--gpu', 'max',
+                                chosen_path]
+                    path_proc = self.run_command(path_cmd, timeout=600)
+                    if path_proc:
+                        print(f"[lms-node] PATH fallback succeeded for {model_key_to_load}")
+                    else:
+                        print(f"[lms-node] PATH fallback FAILED for {model_key_to_load}", file=sys.stderr)
+                else:
+                    print(f"[lms-node] No path found for key '{model_key_to_load}' in JSON listing.", file=sys.stderr)
+
+            if not (key_proc or path_proc):
+                print(f"Warning: Issue loading model (key and path attempts failed): {model_key_to_load}")
                 return (input_string, self.ERROR_NO_MODEL_FOUND, models_found)
+
+            # 5) Verify via `lms ps`
+            rows_after = self._ps_rows()
+            loaded_ok = any(model_key_to_load in r.get("model", "") for r in rows_after)
+            if not loaded_ok and chosen_path:
+                stem = os.path.basename(chosen_path)
+                stem = re.sub(r'\.gguf$', '', stem, flags=re.IGNORECASE)
+                loaded_ok = any(stem in r.get("model", "") for r in rows_after)
+
+            # 6) Build and print verbose metadata
+            meta = self._build_loaded_metadata(model_key_to_load, chosen_path, context_length)
+            if loaded_ok:
+                print(f"Model loaded: {model_key_to_load}")
+                self._currently_loaded_model_path = model_key_to_load
+                print("[lms-node] Loaded Model Info:\n" + json.dumps(meta, indent=2))
+            else:
+                print("Warning: Model load attempted, but not visible in `lms ps`.")
+                print("[lms-node] Post-load Model Info (not confirmed in ps):\n" + json.dumps(meta, indent=2))
+
+            # 7) Return: only the filename portion of the path (fallback to key if missing)
+            short_name = None
+            if meta.get("path"):
+                short_name = meta["path"].replace("\\", "/").split("/")[-1]
+            if not short_name:
+                short_name = model_key_to_load
+
+            return (input_string, short_name, models_found)
 
         except Exception as e:
             print(f"Error: {str(e)}", file=sys.stderr)
+            return (input_string, self.ERROR_CANT_CONNECT, str(e))
 
 class EbuLMStudioUnload:
     ERROR_CANT_CONNECT = "can't connect to lmstudio"
