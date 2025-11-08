@@ -507,6 +507,9 @@ class EbuLMStudioMakeRequest:
                 }),
                 "utf8_safe_replace": ("BOOLEAN", {"default": False}),
             },
+            "optional": {
+                "image": ("IMAGE",),
+            },
         }
 
     RETURN_TYPES = ("STRING",)
@@ -524,15 +527,45 @@ class EbuLMStudioMakeRequest:
             print(f"Warning: UTF-8 sanitization failed: {str(e)}")
             return text.encode('ascii', 'replace').decode('ascii')
 
-    def generateText(self, prompt, system_message, url, context_length, seed, max_tokens, temp, top_p, utf8_safe_replace):
-        description = self.call_api(prompt, system_message, url, context_length, seed, max_tokens, temp, top_p, utf8_safe_replace)
+    def generateText(self, prompt, system_message, url, context_length, seed, max_tokens, temp, top_p, utf8_safe_replace, image=None):
+        description = self.call_api(prompt, system_message, url, context_length, seed, max_tokens, temp, top_p, utf8_safe_replace, image)
         return (description,)
 
-    def call_api(self, prompt_text, system_message, url, context_length, seed, max_tokens, temp, top_p, utf8_safe_replace):
+    def call_api(self, prompt_text, system_message, url, context_length, seed, max_tokens, temp, top_p, utf8_safe_replace, image=None):
+        # Build the user message content
+        if image is not None:
+            # Convert ComfyUI image tensor to base64
+            import numpy as np
+            import base64
+            from io import BytesIO
+            from PIL import Image
+
+            # ComfyUI images are in format [batch, height, width, channels] with values 0-1
+            # Take the first image if batch
+            img_array = image[0].cpu().numpy()
+            # Convert from 0-1 float to 0-255 uint8
+            img_array = (img_array * 255).astype(np.uint8)
+            # Convert to PIL Image
+            pil_image = Image.fromarray(img_array)
+            # Encode to base64
+            buffered = BytesIO()
+            pil_image.save(buffered, format="PNG")
+            img_base64 = base64.b64encode(buffered.getvalue()).decode('utf-8')
+
+            # Use vision format with content array
+            user_content = [
+                {"type": "text", "text": f"{prompt_text}\n"},
+                {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img_base64}"}}
+            ]
+            print("Sending request with image to vision-capable model...")
+        else:
+            # Standard text-only format
+            user_content = f"{prompt_text}\n"
+
         payload = {
             "messages": [
                 { "role": "system", "content": f"{system_message}\n" },
-                { "role": "user", "content": f"{prompt_text}\n" }],
+                { "role": "user", "content": user_content }],
             "max_tokens": max_tokens,
             "temperature": temp,
             "top_p": top_p,

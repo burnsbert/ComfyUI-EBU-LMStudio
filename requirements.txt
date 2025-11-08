@@ -1,1 +1,2 @@
-# No additional requirements beyond Python standard library
+# Most dependencies are provided by ComfyUI (torch, PIL/Pillow, numpy)
+requests
