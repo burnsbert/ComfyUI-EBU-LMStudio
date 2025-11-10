@@ -478,6 +478,32 @@ class EbuLMStudioUnload:
 
 # initially inspired by the excellent LLM node from CrasH Utils Custom Nodes
 class EbuLMStudioMakeRequest:
+    # Preset system prompts
+    PRESET_PROMPTS = [
+        "Custom",
+        "Prompt Style - Tags",
+        "Prompt Style - Simple",
+        "Prompt Style - Detailed",
+        "Prompt Style - Extreme Detailed",
+        "Prompt Style - Cinematic",
+        "Creative - Detailed Analysis",
+        "Creative - Summarize Video",
+        "Creative - Short Story",
+        "Creative - Refine & Expand Prompt"
+    ]
+
+    SYSTEM_PROMPTS = {
+        "Prompt Style - Tags": "Your task is to generate a clean list of comma-separated tags for a text-to-image AI, based *only* on the visual information in the image. Limit the output to a maximum of 50 unique tags. Strictly describe visual elements like subject, clothing, environment, colors, lighting, and composition. Do not include abstract concepts, interpretations, marketing terms, or technical jargon (e.g., no 'SEO', 'brand-aligned', 'viral potential'). The goal is a concise list of visual descriptors. Avoid repeating tags.",
+        "Prompt Style - Simple": "Analyze the image and generate a simple, single-sentence text-to-image prompt. Describe the main subject and the setting concisely.",
+        "Prompt Style - Detailed": "Generate a detailed, artistic text-to-image prompt based on the image. Combine the subject, their actions, the environment, lighting, and overall mood into a single, cohesive paragraph of about 2-3 sentences. Focus on key visual details.",
+        "Prompt Style - Extreme Detailed": "Generate an extremely detailed and descriptive text-to-image prompt from the image. Create a rich paragraph that elaborates on the subject's appearance, textures of clothing, specific background elements, the quality and color of light, shadows, and the overall atmosphere. Aim for a highly descriptive and immersive prompt.",
+        "Prompt Style - Cinematic": "Act as a master prompt engineer. Create a highly detailed and evocative prompt for an image generation AI. Describe the subject, their pose, the environment, the lighting, the mood, and the artistic style (e.g., photorealistic, cinematic, painterly). Weave all elements into a single, natural language paragraph, focusing on visual impact.",
+        "Creative - Detailed Analysis": "Describe this image in detail, breaking down the subject, attire, accessories, background, and composition into separate sections.",
+        "Creative - Summarize Video": "Summarize the key events and narrative points in this video.",
+        "Creative - Short Story": "Write a short, imaginative story inspired by this image or video.",
+        "Creative - Refine & Expand Prompt": "Take the user's prompt and refine it, expanding on the details and adding creative elements to make it more vivid and engaging."
+    }
+
     def __init__(self):
         pass
 
@@ -485,6 +511,7 @@ class EbuLMStudioMakeRequest:
     def INPUT_TYPES(s):
         return {
             "required": {
+                "preset": (s.PRESET_PROMPTS, {"default": "Custom"}),
                 "prompt": ("STRING", { "multiline": True, "default": "" }),
                 "system_message": ("STRING", { "multiline": True, "default": "You are an assistant designed to craft AI image prompts for an AI image generator that uses natural language prompts. Follow the instructions you are given, or use the guidelines, to create a detailed prompt that includes creativity and amazing visual details for an unforgetable image. Respond with just your new prompt." }),
                 "url": ("STRING", { "multiline": False, "default": "http://127.0.0.1:1234/v1/chat/completions" }),
@@ -524,8 +551,16 @@ class EbuLMStudioMakeRequest:
             print(f"Warning: UTF-8 sanitization failed: {str(e)}")
             return text.encode('ascii', 'replace').decode('ascii')
 
-    def generateText(self, prompt, system_message, url, context_length, seed, max_tokens, temp, top_p, utf8_safe_replace):
-        description = self.call_api(prompt, system_message, url, context_length, seed, max_tokens, temp, top_p, utf8_safe_replace)
+    def generateText(self, preset, prompt, system_message, url, context_length, seed, max_tokens, temp, top_p, utf8_safe_replace):
+        # Use preset system prompt if not "Custom", otherwise use the provided system_message
+        if preset != "Custom" and preset in self.SYSTEM_PROMPTS:
+            active_system_message = self.SYSTEM_PROMPTS[preset]
+            print(f"Using preset: {preset}")
+        else:
+            active_system_message = system_message
+            print("Using custom system message")
+
+        description = self.call_api(prompt, active_system_message, url, context_length, seed, max_tokens, temp, top_p, utf8_safe_replace)
         return (description,)
 
     def call_api(self, prompt_text, system_message, url, context_length, seed, max_tokens, temp, top_p, utf8_safe_replace):
